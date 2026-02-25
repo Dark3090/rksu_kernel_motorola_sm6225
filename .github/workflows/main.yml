@@ -61,6 +61,10 @@ jobs:
             binutils zip curl wget cpio kmod zstd tar \
             lld llvm clang
 
+      - name: Configurar git com token
+        run: |
+          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       # ── Checkout do kernel ────────────────────────────────────────
       - name: Checkout kernel source
         uses: actions/checkout@v4
@@ -96,7 +100,7 @@ jobs:
         run: |
           git clone --depth=1 \
             -b ${{ github.event.inputs.SUSFS_BRANCH }} \
-            https://github.com/sidex15/susfs4ksu.git
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/sidex15/susfs4ksu.git
 
           cd kernel_source
 
@@ -187,7 +191,7 @@ jobs:
       # ── AnyKernel3 ────────────────────────────────────────────────
       - name: Empacotar com AnyKernel3
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          git clone --depth=1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/osm0sis/AnyKernel3.git AnyKernel3
 
           for img in Image Image.gz Image-dtb Image.gz-dtb; do
             if [ -f kernel_source/out/arch/arm64/boot/$img ]; then
