@@ -32,15 +32,8 @@ on:
         type: boolean
 
 env:
-  # ── Kernel ─────────────────────────────────────────────────────
   ARCH: arm64
   KERNEL_VERSION: "4.19"
-
-  # ── Toolchain ──────────────────────────────────────────────────
-  # Neutron Clang 18 (ótimo para kernel 4.19)
-  CLANG_URL: "https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/09032024/neutron-clang-09032024.tar.zst"
-
-  # ── Nomes ──────────────────────────────────────────────────────
   KERNEL_NAME: "KultriKernel"
   DEVICE: "SM6225-Motorola"
 
@@ -64,8 +57,9 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y \
             git bc bison flex libssl-dev libelf-dev python3 \
-            make gcc binutils zip curl wget cpio kmod \
-            lld llvm clang zstd tar
+            make gcc gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi \
+            binutils zip curl wget cpio kmod zstd tar \
+            lld llvm clang
 
       # ── Checkout do kernel ────────────────────────────────────────
       - name: Checkout kernel source
@@ -75,70 +69,68 @@ jobs:
           fetch-depth: 1
 
       # ── Toolchain ─────────────────────────────────────────────────
-      - name: Baixar Neutron Clang
+      - name: Baixar Neutron Clang (via AntMan)
         run: |
           mkdir -p $HOME/clang
-          echo "Baixando Neutron Clang..."
-          wget -q --show-progress "${{ env.CLANG_URL }}" -O clang.tar.zst
-          tar -I zstd -xf clang.tar.zst -C $HOME/clang
-          rm clang.tar.zst
-          echo "Clang version:"
+          cd $HOME/clang
+          curl -fsSL "https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman" -o antman
+          chmod +x antman
+          ./antman -S || {
+            echo "⚠️ AntMan falhou, usando clang do sistema como fallback"
+            echo "CLANG_PATH=/usr" >> $GITHUB_ENV
+            exit 0
+          }
+          echo "CLANG_PATH=$HOME/clang" >> $GITHUB_ENV
+          echo "✅ Clang instalado:"
           $HOME/clang/bin/clang --version | head -1
+
+      - name: Configurar PATH da toolchain
+        run: |
+          CLANG_PATH="${{ env.CLANG_PATH }}"
+          [ -z "$CLANG_PATH" ] && CLANG_PATH="$HOME/clang"
+          echo "$CLANG_PATH/bin" >> $GITHUB_PATH
 
       # ── SuSFS ─────────────────────────────────────────────────────
       - name: Integrar SuSFS
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         run: |
-          echo "Clonando susfs4ksu (branch: ${{ github.event.inputs.SUSFS_BRANCH }})..."
           git clone --depth=1 \
             -b ${{ github.event.inputs.SUSFS_BRANCH }} \
             https://github.com/sidex15/susfs4ksu.git
 
           cd kernel_source
 
-          # Copiar arquivos do SuSFS
           cp ../susfs4ksu/kernel_patches/fs/susfs.c fs/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs.h include/linux/
           cp ../susfs4ksu/kernel_patches/fs/sus_su.c fs/ 2>/dev/null || true
 
-          # Aplicar patch no kernel
-          echo "Aplicando patch do kernel..."
           PATCH=$(ls ../susfs4ksu/kernel_patches/ | grep "add_susfs_in_kernel-${{ env.KERNEL_VERSION }}" | head -1)
           if [ -n "$PATCH" ]; then
             patch -p1 --forward < ../susfs4ksu/kernel_patches/$PATCH && \
-              echo "✅ Patch do kernel aplicado: $PATCH" || \
-              echo "⚠️ Patch já aplicado ou conflito menor"
+              echo "✅ Patch kernel aplicado" || echo "⚠️ Patch já aplicado (continuando)"
           else
             echo "❌ Patch não encontrado para kernel ${{ env.KERNEL_VERSION }}"
             ls ../susfs4ksu/kernel_patches/
             exit 1
           fi
 
-          # Aplicar patch no KernelSU (em drivers/kernelsu)
-          echo "Aplicando patch KernelSU..."
-          # O RKSU usa drivers/kernelsu — adaptar patch manualmente se necessário
           KSU_PATCH=$(ls ../susfs4ksu/kernel_patches/KernelSU/ | head -1)
-          if [ -n "$KSU_PATCH" ]; then
+          [ -n "$KSU_PATCH" ] && \
             patch -p1 --forward < ../susfs4ksu/kernel_patches/KernelSU/$KSU_PATCH && \
-              echo "✅ Patch KSU aplicado" || \
-              echo "⚠️ Patch KSU já aplicado ou conflito"
-          fi
+            echo "✅ Patch KSU aplicado" || echo "⚠️ Patch KSU já aplicado (continuando)"
 
       # ── Configurar ────────────────────────────────────────────────
       - name: Gerar .config
         working-directory: kernel_source
         run: |
-          export PATH=$HOME/clang/bin:$PATH
           make O=out ARCH=${{ env.ARCH }} ${{ github.event.inputs.DEFCONFIG }}
 
       - name: Ajustar configs KSU + SuSFS
         working-directory: kernel_source
         run: |
-          # KSU (já tem default y, garantir ativo)
           ./scripts/config --file out/.config --enable CONFIG_KSU
           ./scripts/config --file out/.config --enable CONFIG_KSU_TAMPER_SYSCALL_TABLE
 
-          # SuSFS
           if [ "${{ github.event.inputs.ENABLE_SUSFS }}" == "true" ]; then
             ./scripts/config --file out/.config \
               --enable  CONFIG_KSU_SUSFS \
@@ -151,22 +143,18 @@ jobs:
               --disable CONFIG_KSU_SUSFS_SUS_OVERLAYFS
           fi
 
-          # LTO
           if [ "${{ github.event.inputs.ENABLE_LTO }}" == "true" ]; then
             ./scripts/config --file out/.config \
-              --enable CONFIG_LTO_CLANG \
+              --enable  CONFIG_LTO_CLANG \
               --disable CONFIG_LTO_NONE
           fi
 
-          # Aplicar novos configs
           make O=out ARCH=${{ env.ARCH }} olddefconfig
 
       # ── Compilar ──────────────────────────────────────────────────
       - name: Compilar kernel
         working-directory: kernel_source
         run: |
-          export PATH=$HOME/clang/bin:$PATH
-
           BUILD_START=$(date +"%s")
 
           make -j$(nproc --all) O=out \
@@ -185,15 +173,14 @@ jobs:
 
           BUILD_END=$(date +"%s")
           DIFF=$(( BUILD_END - BUILD_START ))
-          echo "⏱️ Tempo de build: $(( DIFF / 60 )) min $(( DIFF % 60 )) seg"
+          echo "⏱️ Tempo: $(( DIFF / 60 ))m $(( DIFF % 60 ))s"
 
-          # Verificar se Image foi gerada
           if [ -f out/arch/arm64/boot/Image ]; then
-            echo "✅ Image gerada com sucesso!"
+            echo "✅ Image gerada!"
             ls -lh out/arch/arm64/boot/Image*
           else
-            echo "❌ Image não encontrada — build falhou"
-            tail -50 build.log
+            echo "❌ Build falhou"
+            tail -80 build.log
             exit 1
           fi
 
@@ -202,7 +189,6 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
 
-          # Copiar Image
           for img in Image Image.gz Image-dtb Image.gz-dtb; do
             if [ -f kernel_source/out/arch/arm64/boot/$img ]; then
               cp kernel_source/out/arch/arm64/boot/$img AnyKernel3/
@@ -211,26 +197,19 @@ jobs:
             fi
           done
 
-          # Copiar DTB/DTBO se existirem
           [ -f kernel_source/out/arch/arm64/boot/dtbo.img ] && \
-            cp kernel_source/out/arch/arm64/boot/dtbo.img AnyKernel3/ && \
-            echo "✅ Copiado: dtbo.img"
+            cp kernel_source/out/arch/arm64/boot/dtbo.img AnyKernel3/
 
-          # Montar nome do zip
           SUSFS_TAG=""
           [ "${{ github.event.inputs.ENABLE_SUSFS }}" == "true" ] && SUSFS_TAG="-SuSFS"
-
           ZIP_NAME="${{ env.KERNEL_NAME }}-RKSU${SUSFS_TAG}-${{ env.DEVICE }}-$(date +%Y%m%d-%H%M).zip"
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
           cd AnyKernel3
           zip -r9 ../$ZIP_NAME * -x .git README.md
-          cd ..
+          echo "📦 $ZIP_NAME ($(du -sh ../$ZIP_NAME | cut -f1))"
 
-          echo "📦 Pacote criado: $ZIP_NAME"
-          ls -lh $ZIP_NAME
-
-      # ── Upload artifacts ──────────────────────────────────────────
+      # ── Upload ────────────────────────────────────────────────────
       - name: Upload kernel zip
         uses: actions/upload-artifact@v4
         with:
@@ -239,7 +218,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-      - name: Upload build log (em caso de falha)
+      - name: Upload log em caso de falha
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -252,7 +231,6 @@ jobs:
         if: success()
         run: |
           echo "## ✅ Build concluído!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Valor |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Kernel | ${{ env.KERNEL_VERSION }} |" >> $GITHUB_STEP_SUMMARY
@@ -260,5 +238,4 @@ jobs:
           echo "| Defconfig | ${{ github.event.inputs.DEFCONFIG }} |" >> $GITHUB_STEP_SUMMARY
           echo "| RKSU | ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "| SuSFS | ${{ github.event.inputs.ENABLE_SUSFS }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| LTO | ${{ github.event.inputs.ENABLE_LTO }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Arquivo | \`${{ env.ZIP_NAME }}\` |" >> $GITHUB_STEP_SUMMARY
