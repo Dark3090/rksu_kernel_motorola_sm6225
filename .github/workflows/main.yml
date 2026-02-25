@@ -98,9 +98,10 @@ jobs:
       - name: Integrar SuSFS
         if: ${{ github.event.inputs.ENABLE_SUSFS == 'true' }}
         run: |
+          # Repositório oficial do SuSFS está no GitLab
           git clone --depth=1 \
             -b ${{ github.event.inputs.SUSFS_BRANCH }} \
-            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/sidex15/susfs4ksu.git
+            https://gitlab.com/simonpunk/susfs4ksu.git
 
           cd kernel_source
 
