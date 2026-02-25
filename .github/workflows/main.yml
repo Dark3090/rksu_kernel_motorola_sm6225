@@ -128,7 +128,7 @@ jobs:
       - name: Gerar .config
         working-directory: kernel_source
         run: |
-          make O=out ARCH=${{ env.ARCH }} ${{ github.event.inputs.DEFCONFIG }}
+          yes "" | make O=out ARCH=${{ env.ARCH }} ${{ github.event.inputs.DEFCONFIG }}
 
       - name: Ajustar configs KSU + SuSFS
         working-directory: kernel_source
@@ -154,7 +154,8 @@ jobs:
               --disable CONFIG_LTO_NONE
           fi
 
-          make O=out ARCH=${{ env.ARCH }} olddefconfig
+          # olddefconfig: usa yes "" para responder automaticamente qualquer nova config com o valor padrão
+          yes "" | make O=out ARCH=${{ env.ARCH }} olddefconfig
 
       # ── Compilar ──────────────────────────────────────────────────
       - name: Compilar kernel
@@ -174,6 +175,7 @@ jobs:
             OBJDUMP=llvm-objdump \
             STRIP=llvm-strip \
             CLANG_TRIPLE=aarch64-linux-gnu- \
+            DTC_FLAGS="-f" \
             2>&1 | tee build.log
 
           BUILD_END=$(date +"%s")
