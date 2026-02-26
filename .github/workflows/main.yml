@@ -196,6 +196,9 @@ jobs:
         run: |
           git clone --depth=1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/osm0sis/AnyKernel3.git AnyKernel3
 
+          # Substituir anykernel.sh padrão pelo configurado para o Moto G32 (devon)
+          cp anykernel.sh AnyKernel3/anykernel.sh
+
           for img in Image Image.gz Image-dtb Image.gz-dtb; do
             if [ -f kernel_source/out/arch/arm64/boot/$img ]; then
               cp kernel_source/out/arch/arm64/boot/$img AnyKernel3/
